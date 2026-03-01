@@ -1,0 +1,102 @@
+import React, { useEffect, useState } from 'react';
+
+const colors = {
+  listening: '#10B981',
+  processing: '#F59E0B',
+  error: '#EF4444',
+  paused: '#94A3B8',
+  textPrimary: '#F8FAFC',
+};
+
+const statusConfig: Record<
+  StatusIndicatorProps['status'],
+  { color: string; label: string }
+> = {
+  listening: { color: colors.listening, label: 'Listening...' },
+  processing: { color: colors.processing, label: 'Processing...' },
+  error: { color: colors.error, label: 'Error' },
+  paused: { color: colors.paused, label: 'Paused' },
+};
+
+interface StatusIndicatorProps {
+  status: 'listening' | 'processing' | 'error' | 'paused';
+}
+
+export default function StatusIndicator({ status }: StatusIndicatorProps) {
+  const config = statusConfig[status];
+  const [pulseVisible, setPulseVisible] = useState(true);
+
+  useEffect(() => {
+    if (status !== 'listening') {
+      setPulseVisible(true);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setPulseVisible((prev) => !prev);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [status]);
+
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 14px',
+        borderRadius: 20,
+        background: `${config.color}18`,
+        border: `1px solid ${config.color}30`,
+      }}
+    >
+      <div
+        style={{
+          position: 'relative',
+          width: 8,
+          height: 8,
+        }}
+      >
+        {/* Static dot */}
+        <div
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: config.color,
+          }}
+        />
+
+        {/* Pulse ring for listening state */}
+        {status === 'listening' && (
+          <div
+            style={{
+              position: 'absolute',
+              top: -4,
+              left: -4,
+              width: 16,
+              height: 16,
+              borderRadius: '50%',
+              border: `2px solid ${config.color}`,
+              opacity: pulseVisible ? 0.6 : 0,
+              transform: pulseVisible ? 'scale(1)' : 'scale(0.5)',
+              transition: 'opacity 0.5s ease, transform 0.5s ease',
+            }}
+          />
+        )}
+      </div>
+
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 500,
+          color: config.color,
+          letterSpacing: '0.01em',
+        }}
+      >
+        {config.label}
+      </span>
+    </div>
+  );
+}
