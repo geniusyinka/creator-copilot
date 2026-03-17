@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { WebSocketService } from '../services/WebSocketService';
 import type { WSClientMessage, WSServerMessage } from '../types';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws/session';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8081/ws/session';
 
 export function useWebSocket() {
   const [isConnected, setIsConnected] = useState(false);

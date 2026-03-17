@@ -9,7 +9,6 @@ import base64
 import json
 import logging
 import time
-import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -41,6 +40,33 @@ async def websocket_session(ws: WebSocket) -> None:
     session: dict | None = None
     background_tasks: list[asyncio.Task] = []
     stop_event = asyncio.Event()
+    summary_sent = False
+
+    async def send_summary() -> None:
+        """Send a single end-of-session summary if the session was initialized."""
+        nonlocal summary_sent
+
+        if summary_sent or not engine or not session:
+            return
+
+        summary_data = engine.get_session_summary()
+        ended = session_manager.end_session(session["session_id"])
+        duration = ended["duration_seconds"] if ended else 0
+
+        summary_msg = {
+            "type": "summary",
+            "data": {
+                "session_id": session["session_id"],
+                "duration_seconds": duration,
+                "platform": session.get("platform", ""),
+                "interruption_count": summary_data["interruption_count"],
+                "issues_caught": summary_data["issues_caught"],
+                "issues_fixed": summary_data["issues_fixed"],
+                "final_recommendations": summary_data.get("positive_notes", []),
+            },
+        }
+        await ws.send_json(summary_msg)
+        summary_sent = True
 
     try:
         # ---- 1. Receive config ----
@@ -83,17 +109,39 @@ async def websocket_session(ws: WebSocket) -> None:
 
         # ---- 3. Background tasks ----
 
+        # Shared mutable state for backoff between analysis and response tasks
+        poll_state = {"consecutive_silence": 0, "backoff_extra": 0.0}
+
         async def periodic_analysis() -> None:
-            """Every N seconds, ask Gemini to evaluate and possibly interrupt."""
+            """Adaptive polling: fast during hook window, backs off on silence."""
+            session_start = time.time()
+
             while not stop_event.is_set():
-                await asyncio.sleep(8)  # Check every 8 seconds
+                # Adaptive base interval
+                elapsed = time.time() - session_start
+                if elapsed < 30:
+                    base_interval = 3.0  # Hook window — check fast
+                elif elapsed < 120:
+                    base_interval = 4.0
+                else:
+                    base_interval = 5.0
+
+                interval = min(base_interval + poll_state["backoff_extra"], 8.0)
+                await asyncio.sleep(interval)
                 if stop_event.is_set():
                     break
+
                 try:
                     if engine.can_interrupt():
-                        await gemini.request_analysis(
-                            trigger="Periodic check: review the latest content."
-                        )
+                        # Contextual trigger based on session phase
+                        if elapsed < 30:
+                            trigger = "Watch their opening — is the hook strong?"
+                        elif elapsed < 120:
+                            trigger = "Check pacing, energy, and delivery."
+                        else:
+                            trigger = "Look for pacing, engagement, and any recurring issues."
+
+                        await gemini.request_analysis(trigger=trigger)
                 except Exception as exc:
                     logger.error("Periodic analysis error: %s", exc)
 
@@ -105,6 +153,10 @@ async def websocket_session(ws: WebSocket) -> None:
                         break
 
                     if response["type"] == "no_interrupt":
+                        poll_state["consecutive_silence"] += 1
+                        poll_state["backoff_extra"] = min(
+                            poll_state["consecutive_silence"] * 0.5, 3.0
+                        )
                         continue
 
                     content = response.get("content")
@@ -118,6 +170,10 @@ async def websocket_session(ws: WebSocket) -> None:
 
                     engine.record_interruption(content)
 
+                    # Reset backoff on real feedback
+                    poll_state["consecutive_silence"] = 0
+                    poll_state["backoff_extra"] = 0.0
+
                     # Build payload for client
                     itype = content.get("type", "suggestion")
                     payload: dict = {
@@ -125,10 +181,7 @@ async def websocket_session(ws: WebSocket) -> None:
                         "content": {
                             "type": itype,
                             "raw": content.get("raw", ""),
-                            "issue": content.get("issue"),
-                            "advice": content.get("advice"),
-                            "example": content.get("example"),
-                            "why": content.get("why"),
+                            "advice": content.get("advice", content.get("raw", "")),
                         },
                     }
 
@@ -155,33 +208,37 @@ async def websocket_session(ws: WebSocket) -> None:
             msg = json.loads(raw)
             mtype = msg.get("type")
 
-            if mtype == "video_frame":
-                data = msg.get("data", "")
-                if data:
-                    await gemini.send_frame(base64.b64decode(data))
+            try:
+                if mtype == "video_frame":
+                    data = msg.get("data", "")
+                    if data:
+                        await gemini.send_frame(base64.b64decode(data))
 
-            elif mtype == "audio_chunk":
-                data = msg.get("data", "")
-                if data:
-                    await gemini.send_audio(base64.b64decode(data))
+                elif mtype == "audio_chunk":
+                    data = msg.get("data", "")
+                    if data:
+                        await gemini.send_audio(base64.b64decode(data))
 
-            elif mtype == "manual_check":
-                await gemini.request_analysis(
-                    trigger="Creator explicitly asked for feedback now."
-                )
+                elif mtype == "manual_check":
+                    await gemini.request_analysis(
+                        trigger="Creator explicitly asked for feedback now."
+                    )
 
-            elif mtype == "settings_update":
-                new_intensity = msg.get("intensity")
-                if new_intensity and engine:
-                    engine.update_settings(new_intensity)
-                    await ws.send_json({
-                        "type": "status",
-                        "status": "ready",
-                        "intensity": new_intensity,
-                    })
+                elif mtype == "settings_update":
+                    new_intensity = msg.get("intensity")
+                    if new_intensity and engine:
+                        engine.update_settings(new_intensity)
+                        await ws.send_json({
+                            "type": "status",
+                            "status": "ready",
+                            "intensity": new_intensity,
+                        })
 
-            elif mtype == "end_session":
-                break
+                elif mtype == "end_session":
+                    await send_summary()
+                    break
+            except Exception as exc:
+                logger.error("Error processing %s message: %s", mtype, exc)
 
     except WebSocketDisconnect:
         logger.info("Client disconnected")
@@ -200,23 +257,7 @@ async def websocket_session(ws: WebSocket) -> None:
         # Send summary if connection is still open
         if engine and session:
             try:
-                summary_data = engine.get_session_summary()
-                ended = session_manager.end_session(session["session_id"])
-                duration = ended["duration_seconds"] if ended else 0
-
-                summary_msg = {
-                    "type": "summary",
-                    "data": {
-                        "session_id": session["session_id"],
-                        "duration_seconds": duration,
-                        "platform": session.get("platform", ""),
-                        "interruption_count": summary_data["interruption_count"],
-                        "issues_caught": summary_data["issues_caught"],
-                        "issues_fixed": summary_data["issues_fixed"],
-                        "final_recommendations": summary_data.get("positive_notes", []),
-                    },
-                }
-                await ws.send_json(summary_msg)
+                await send_summary()
             except Exception:
                 pass
 

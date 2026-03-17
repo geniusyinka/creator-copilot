@@ -133,9 +133,9 @@ class InterruptionEngine:
             Minimum gap in seconds.
         """
         gaps = {
-            "aggressive": 30,
-            "balanced": 60,
-            "light": 120,
+            "aggressive": 15,
+            "balanced": 30,
+            "light": 60,
             "muted": math.inf,
         }
         return gaps.get(self.intensity, 60)
@@ -148,9 +148,9 @@ class InterruptionEngine:
             Maximum interruption count.
         """
         limits = {
-            "aggressive": 6,
-            "balanced": 4,
-            "light": 2,
+            "aggressive": 10,
+            "balanced": 6,
+            "light": 3,
             "muted": 0,
         }
         return limits.get(self.intensity, 4)
@@ -166,9 +166,9 @@ class InterruptionEngine:
             True if severity meets or exceeds the threshold.
         """
         thresholds = {
-            "aggressive": 0.3,
-            "balanced": 0.5,
-            "light": 0.7,
+            "aggressive": 0.2,
+            "balanced": 0.4,
+            "light": 0.6,
             "muted": 1.1,  # effectively impossible
         }
         threshold = thresholds.get(self.intensity, 0.5)
@@ -218,9 +218,7 @@ class InterruptionEngine:
         Returns:
             Normalized topic string, or None if no topic can be extracted.
         """
-        issue = content.get("issue")
-        working = content.get("working")
-        text = issue or working
+        text = content.get("advice") or content.get("raw")
 
         if not text:
             return None

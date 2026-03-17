@@ -1,4 +1,3 @@
-import React from 'react';
 import type { Interruption } from '../../types';
 import InterruptionCard from './InterruptionCard';
 
@@ -12,16 +11,12 @@ interface InterruptionQueueProps {
   activeInterruption: Interruption | null;
   queueCount: number;
   onAcknowledge: () => void;
-  onExpand: () => void;
-  onDismiss: () => void;
 }
 
 export default function InterruptionQueue({
   activeInterruption,
   queueCount,
   onAcknowledge,
-  onExpand,
-  onDismiss,
 }: InterruptionQueueProps) {
   if (!activeInterruption) return null;
 
@@ -91,14 +86,9 @@ export default function InterruptionQueue({
       <InterruptionCard
         interruption={{
           type: activeInterruption.type,
-          issue: activeInterruption.issue,
           advice: activeInterruption.advice,
-          example: activeInterruption.example,
-          platformContext: activeInterruption.platformContext,
         }}
         onAcknowledge={onAcknowledge}
-        onExpand={onExpand}
-        onDismiss={onDismiss}
       />
     </div>
   );

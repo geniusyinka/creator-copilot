@@ -4,7 +4,6 @@ Uses gemini-2.5-flash-native-audio with audio output and transcription.
 """
 
 import logging
-import re
 from typing import AsyncGenerator, Optional
 
 from google import genai
@@ -79,14 +78,12 @@ class GeminiService:
             raise RuntimeError("Session not initialized")
 
         prompt = (
-            "Based on everything you've seen and heard so far in this session, "
-            "should you interrupt the creator with feedback? "
-            "If there is a genuine issue worth mentioning, give your feedback directly as spoken advice. "
-            "Be concise - 2-3 sentences max. Speak as a creative director giving a quick note. "
+            "If you notice something worth mentioning, speak up naturally — "
+            "like a director giving a quick note on set. Two to three sentences, tops. "
             "If everything looks fine, say exactly: [NO_INTERRUPT]"
         )
         if trigger:
-            prompt = f"Context: {trigger}\n\n{prompt}"
+            prompt = f"{trigger}\n\n{prompt}"
 
         await self.session.send_client_content(
             turns=types.Content(
@@ -142,49 +139,46 @@ class GeminiService:
                         "audio": collected_audio if collected_audio else None,
                     }
 
+    # Keywords that signal severity level from natural language
+    _CRITICAL_KEYWORDS = [
+        "hook", "intro", "opening", "first impression", "losing", "stop",
+        "wait", "no no", "redo", "start over", "burying", "buried",
+    ]
+    _POSITIVE_KEYWORDS = [
+        "love", "great", "perfect", "nice", "nailing", "keep",
+        "exactly", "good job", "working", "that's it",
+    ]
+
     @staticmethod
     def _parse_feedback(text: str) -> dict:
-        """Parse feedback text into structured format."""
-        result = {
+        """Parse natural-language feedback into type and severity using keywords."""
+        lower = text.lower()
+
+        # Detect positive feedback
+        if any(kw in lower for kw in GeminiService._POSITIVE_KEYWORDS):
+            return {
+                "raw": text,
+                "type": "positive",
+                "advice": text,
+                "severity": 0.3,
+            }
+
+        # Detect critical feedback
+        if any(kw in lower for kw in GeminiService._CRITICAL_KEYWORDS):
+            return {
+                "raw": text,
+                "type": "critical",
+                "advice": text,
+                "severity": 0.8,
+            }
+
+        # Default: suggestion
+        return {
             "raw": text,
             "type": "suggestion",
-            "issue": None,
-            "advice": text,  # Default: use full text as advice
-            "example": None,
-            "why": None,
+            "advice": text,
             "severity": 0.5,
         }
-
-        # Try structured ISSUE/ADVICE format
-        issue_match = re.search(r"ISSUE:\s*(.+?)(?=\nADVICE:|\nWORKING:|\Z)", text, re.DOTALL)
-        advice_match = re.search(r"ADVICE:\s*(.+?)(?=\nEXAMPLE:|\nWHY:|\Z)", text, re.DOTALL)
-        example_match = re.search(r"EXAMPLE:\s*(.+?)(?=\nWHY:|\Z)", text, re.DOTALL)
-        why_match = re.search(r"WHY:\s*(.+?)(?=\Z)", text, re.DOTALL)
-        working_match = re.search(r"WORKING:\s*(.+?)(?=\nWHY:|\Z)", text, re.DOTALL)
-
-        if issue_match:
-            result["issue"] = issue_match.group(1).strip()
-            result["type"] = "critical" if any(
-                kw in result["issue"].lower()
-                for kw in ["hook", "intro", "burying", "subscribe", "greeting", "welcome", "lead"]
-            ) else "suggestion"
-            result["severity"] = 0.8 if result["type"] == "critical" else 0.5
-
-        if advice_match:
-            result["advice"] = advice_match.group(1).strip()
-
-        if example_match:
-            result["example"] = example_match.group(1).strip()
-
-        if why_match:
-            result["why"] = why_match.group(1).strip()
-
-        if working_match:
-            result["type"] = "positive"
-            result["advice"] = working_match.group(1).strip()
-            result["severity"] = 0.3
-
-        return result
 
     async def close(self) -> None:
         """Close the Gemini Live session."""

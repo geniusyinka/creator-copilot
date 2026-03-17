@@ -16,9 +16,8 @@ export class MediaService {
       video: {
         width: { ideal: 640 },
         height: { ideal: 480 },
-        frameRate: { ideal: 5 },
       },
-      audio: true,
+      audio: false, // Audio handled separately by AudioService
     });
     return stream;
   }
@@ -37,13 +36,20 @@ export class MediaService {
   }
 
   captureFrame(video: HTMLVideoElement): string {
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
+    const srcW = video.videoWidth || 640;
+    const srcH = video.videoHeight || 480;
 
-    this.canvas.width = width;
-    this.canvas.height = height;
-    this.ctx.drawImage(video, 0, 0, width, height);
+    // Downscale for Gemini – 512px wide is plenty for content analysis
+    const scale = Math.min(1, 512 / srcW);
+    const w = Math.round(srcW * scale);
+    const h = Math.round(srcH * scale);
 
-    return this.canvas.toDataURL('image/jpeg', 0.7);
+    this.canvas.width = w;
+    this.canvas.height = h;
+    this.ctx.drawImage(video, 0, 0, w, h);
+
+    const dataUrl = this.canvas.toDataURL('image/jpeg', 0.5);
+    // Strip the data-URL prefix – server expects raw base64
+    return dataUrl.split(',')[1] || '';
   }
 }

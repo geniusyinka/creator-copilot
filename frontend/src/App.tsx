@@ -42,7 +42,7 @@ type AppStep =
   | 'summary';
 
 function AppContent() {
-  const { state: sessionState, dispatch } = useSession();
+  const { dispatch } = useSession();
   const { settings, hasCompletedSetup } = useSettings();
 
   // Determine initial step based on whether setup is done
@@ -58,19 +58,19 @@ function AppContent() {
   const [isMuted, setIsMuted] = useState(false);
   const [summaryData, setSummaryData] = useState<SessionSummaryData | null>(null);
   const [isHoveringStart, setIsHoveringStart] = useState(false);
+  const [isEndingSession, setIsEndingSession] = useState(false);
 
   // Hooks
   const { isConnected, lastMessage, connect, disconnect, send } = useWebSocket();
-  const { stream: cameraStream, isActive: cameraActive, startCamera, stopCamera, videoRef: cameraVideoRef } = useCamera();
-  const { stream: screenStream, isActive: screenActive, startScreenShare, stopScreenShare, videoRef: screenVideoRef } = useScreenShare();
+  const { startCamera, stopCamera, videoRef: cameraVideoRef } = useCamera();
+  const { startScreenShare, stopScreenShare, videoRef: screenVideoRef } = useScreenShare();
   const { isActive: micActive, startMicrophone, stopMicrophone, onAudioData } = useMicrophone();
   const {
     interruptions,
     activeInterruption,
     showHistory,
     addInterruption,
-    respondToInterruption,
-    dismissInterruption,
+    acknowledgeInterruption,
     toggleHistory,
   } = useInterruption();
   const { playAudio, playChime } = useAudioPlayer();
@@ -79,6 +79,7 @@ function AppContent() {
   const mediaServiceRef = useRef<MediaService>(new MediaService());
   const frameIntervalRef = useRef<number | null>(null);
   const timerIntervalRef = useRef<number | null>(null);
+  const endSessionTimeoutRef = useRef<number | null>(null);
   const elapsedRef = useRef(0);
   const [elapsedTime, setElapsedTime] = useState(0);
 
@@ -91,15 +92,25 @@ function AppContent() {
 
     switch (lastMessage.type) {
       case 'interruption': {
-        playChime();
         addInterruption(lastMessage.content);
         if (lastMessage.audio) {
           playAudio(lastMessage.audio);
+        } else {
+          playChime();
         }
         break;
       }
       case 'summary': {
         setSummaryData(lastMessage.data);
+        if (endSessionTimeoutRef.current) {
+          clearTimeout(endSessionTimeoutRef.current);
+          endSessionTimeoutRef.current = null;
+        }
+        if (isEndingSession) {
+          disconnect();
+          setIsEndingSession(false);
+          setStep('summary');
+        }
         break;
       }
       case 'error': {
@@ -111,7 +122,18 @@ function AppContent() {
         break;
       }
     }
-  }, [lastMessage, playChime, addInterruption, playAudio]);
+  }, [lastMessage, playChime, addInterruption, playAudio, disconnect, isEndingSession]);
+
+  useEffect(() => {
+    if (!isEndingSession || isConnected) return;
+
+    if (endSessionTimeoutRef.current) {
+      clearTimeout(endSessionTimeoutRef.current);
+      endSessionTimeoutRef.current = null;
+    }
+    setIsEndingSession(false);
+    setStep('summary');
+  }, [isConnected, isEndingSession]);
 
   // Start capturing frames and sending them over WebSocket
   const startFrameCapture = useCallback(() => {
@@ -129,7 +151,7 @@ function AppContent() {
       } catch (err) {
         // Silently skip frame if capture fails
       }
-    }, 200); // 5 FPS
+    }, 1000); // ~1 FPS for Gemini analysis
   }, [activeVideoRef, send]);
 
   // Stop frame capture
@@ -168,7 +190,7 @@ function AppContent() {
     setStep('permissions');
   }, [selectedPlatform]);
 
-  // Called after permissions are granted
+  // Called after permissions are granted – fully sequential to avoid race conditions
   const onPermissionsGranted = useCallback(async () => {
     if (!selectedPlatform) return;
 
@@ -184,31 +206,16 @@ function AppContent() {
     });
 
     try {
-      // Connect WebSocket
+      // 1. Connect WebSocket and send config FIRST
       await connect();
-    } catch (err) {
-      console.error('Failed to connect WebSocket:', err);
-    }
-  }, [selectedPlatform, contentDescription, intensity, inputMode, dispatch, connect]);
+      send({
+        type: 'config',
+        platform: selectedPlatform,
+        intensity,
+        description: contentDescription || undefined,
+      });
 
-  // Once we transition to 'active' and the WS connects, initialize media
-  useEffect(() => {
-    if (step !== 'active') return;
-
-    let cancelled = false;
-
-    const initMedia = async () => {
-      // Send config message once connected
-      if (isConnected && selectedPlatform) {
-        send({
-          type: 'config',
-          platform: selectedPlatform,
-          intensity,
-          description: contentDescription || undefined,
-        });
-      }
-
-      // Start camera or screen share
+      // 2. Start media capture
       try {
         if (inputMode === 'camera') {
           await startCamera();
@@ -219,37 +226,29 @@ function AppContent() {
         console.error('Failed to start video capture:', err);
       }
 
-      // Start microphone
       try {
         await startMicrophone();
       } catch (err) {
         console.error('Failed to start microphone:', err);
       }
 
-      if (!cancelled) {
-        // Set up audio data forwarding
-        onAudioData((data: string) => {
-          send({ type: 'audio_chunk', data });
-        });
-
-        // Start frame capture
-        startFrameCapture();
-
-        // Start elapsed timer
-        startTimer();
-      }
-    };
-
-    initMedia();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, isConnected]);
+      // 3. Wire up audio forwarding and frame capture AFTER config sent
+      onAudioData((data: string) => {
+        send({ type: 'audio_chunk', data });
+      });
+      startFrameCapture();
+      startTimer();
+    } catch (err) {
+      console.error('Failed to start session:', err);
+    }
+  }, [selectedPlatform, contentDescription, intensity, inputMode, dispatch, connect, send, startCamera, startScreenShare, startMicrophone, onAudioData, startFrameCapture, startTimer]);
 
   // End the session
   const endSession = useCallback(() => {
+    if (isEndingSession) return;
+
+    setIsEndingSession(true);
+
     // Send end message to server
     send({ type: 'end_session' });
 
@@ -264,9 +263,15 @@ function AppContent() {
     // Update context
     dispatch({ type: 'END_SESSION' });
 
-    // Move to summary
-    setStep('summary');
+    // Fallback in case the socket closes or the summary never arrives
+    endSessionTimeoutRef.current = window.setTimeout(() => {
+      disconnect();
+      setIsEndingSession(false);
+      setStep('summary');
+      endSessionTimeoutRef.current = null;
+    }, 1500);
   }, [
+    isEndingSession,
     send,
     stopFrameCapture,
     stopTimer,
@@ -282,6 +287,9 @@ function AppContent() {
     return () => {
       stopFrameCapture();
       stopTimer();
+      if (endSessionTimeoutRef.current) {
+        clearTimeout(endSessionTimeoutRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -336,6 +344,7 @@ function AppContent() {
     setContentDescription('');
     setIntensity(settings.intensity);
     setSummaryData(null);
+    setIsEndingSession(false);
     setElapsedTime(0);
     elapsedRef.current = 0;
     setStep('platform-select');
@@ -563,16 +572,7 @@ function AppContent() {
             {activeInterruption && (
               <InterruptionCard
                 interruption={activeInterruption}
-                onAcknowledge={() => {
-                  respondToInterruption(activeInterruption.id, 'acknowledged');
-                  dismissInterruption();
-                }}
-                onExpand={() => {
-                  respondToInterruption(activeInterruption.id, 'expanded');
-                }}
-                onDismiss={() => {
-                  dismissInterruption();
-                }}
+                onAcknowledge={acknowledgeInterruption}
               />
             )}
           </SessionView>
