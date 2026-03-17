@@ -71,21 +71,30 @@ export class AudioService {
       this.audioContext = context;
     }
 
-    const oscillator = context.createOscillator();
-    const gainNode = context.createGain();
+    const now = context.currentTime;
 
-    oscillator.connect(gainNode);
-    gainNode.connect(context.destination);
+    // Gentle two-tone: C5 then E5, triangle wave, quiet and short
+    const osc1 = context.createOscillator();
+    const osc2 = context.createOscillator();
+    const gain = context.createGain();
 
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, context.currentTime);
-    oscillator.frequency.setValueAtTime(1100, context.currentTime + 0.1);
+    osc1.type = 'triangle';
+    osc2.type = 'triangle';
+    osc1.frequency.value = 523.25; // C5
+    osc2.frequency.value = 659.25; // E5
 
-    gainNode.gain.setValueAtTime(0.3, context.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(context.destination);
 
-    oscillator.start(context.currentTime);
-    oscillator.stop(context.currentTime + 0.3);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.12, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+    osc1.start(now);
+    osc2.start(now + 0.06);
+    osc1.stop(now + 0.18);
+    osc2.stop(now + 0.18);
   }
 
   stopCapture(): void {
