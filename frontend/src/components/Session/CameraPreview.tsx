@@ -9,7 +9,7 @@ const colors = {
 };
 
 interface CameraPreviewProps {
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   isActive: boolean;
   inputMode: 'camera' | 'screen';
 }

@@ -31,7 +31,7 @@ function formatTime(seconds: number): string {
 }
 
 interface SessionViewProps {
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   platform: Platform;
   elapsedTime: number;
   feedbackCount: number;
