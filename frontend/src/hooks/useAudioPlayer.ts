@@ -20,5 +20,9 @@ export function useAudioPlayer() {
     audioServiceRef.current.playChime();
   }, []);
 
-  return { playAudio, playChime, isPlaying };
+  const getAnalyser = useCallback((): AnalyserNode | null => {
+    return audioServiceRef.current.getAnalyser();
+  }, []);
+
+  return { playAudio, playChime, isPlaying, getAnalyser };
 }

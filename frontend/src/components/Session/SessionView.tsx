@@ -36,6 +36,8 @@ interface SessionViewProps {
   elapsedTime: number;
   feedbackCount: number;
   isListening: boolean;
+  isSpeaking: boolean;
+  getAnalyser?: () => AnalyserNode | null;
   inputMode: 'camera' | 'screen';
   onSwitchToCamera: () => void;
   onSwitchToScreen: () => void;
@@ -53,6 +55,8 @@ export default function SessionView({
   elapsedTime,
   feedbackCount,
   isListening,
+  isSpeaking,
+  getAnalyser,
   inputMode,
   onSwitchToCamera,
   onSwitchToScreen,
@@ -239,7 +243,10 @@ export default function SessionView({
         }}
       >
         {/* Left: Status indicator */}
-        <StatusIndicator status={isListening ? 'listening' : 'processing'} />
+        <StatusIndicator
+          status={isSpeaking ? 'speaking' : isListening ? 'listening' : 'processing'}
+          getAnalyser={getAnalyser}
+        />
 
         {/* Right: Timer + Feedback count */}
         <div
