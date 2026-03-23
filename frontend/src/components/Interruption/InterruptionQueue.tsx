@@ -11,12 +11,14 @@ interface InterruptionQueueProps {
   activeInterruption: Interruption | null;
   queueCount: number;
   onAcknowledge: () => void;
+  onDismiss?: () => void;
 }
 
 export default function InterruptionQueue({
   activeInterruption,
   queueCount,
   onAcknowledge,
+  onDismiss,
 }: InterruptionQueueProps) {
   if (!activeInterruption) return null;
 
@@ -89,6 +91,7 @@ export default function InterruptionQueue({
           advice: activeInterruption.advice,
         }}
         onAcknowledge={onAcknowledge}
+        onDismiss={onDismiss}
       />
     </div>
   );

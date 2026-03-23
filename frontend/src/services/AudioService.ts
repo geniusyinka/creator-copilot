@@ -6,6 +6,18 @@ export class AudioService {
   private audioDataHandler: ((data: string) => void) | null = null;
   private capturing = false;
 
+  // Analyser for waveform visualization during playback
+  private analyser: AnalyserNode | null = null;
+  private _isPlayingAudio = false;
+
+  getAnalyser(): AnalyserNode | null {
+    return this.analyser;
+  }
+
+  get isPlayingAudio(): boolean {
+    return this._isPlayingAudio;
+  }
+
   async startCapture(): Promise<{ stream: MediaStream; processor: ScriptProcessorNode }> {
     this.audioContext = new AudioContext();
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -55,12 +67,24 @@ export class AudioService {
       channelData[i] = pcm16[i] / 32768;
     }
 
+    // Create or reuse analyser for waveform visualization
+    if (!this.analyser || this.analyser.context !== context) {
+      this.analyser = context.createAnalyser();
+      this.analyser.fftSize = 128;
+      this.analyser.smoothingTimeConstant = 0.7;
+      this.analyser.connect(context.destination);
+    }
+
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(context.destination);
+    source.connect(this.analyser);
 
+    this._isPlayingAudio = true;
     return new Promise<void>((resolve) => {
-      source.onended = () => resolve();
+      source.onended = () => {
+        this._isPlayingAudio = false;
+        resolve();
+      };
       source.start(0);
     });
   }

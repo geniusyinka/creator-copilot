@@ -72,8 +72,9 @@ function AppContent() {
     addInterruption,
     acknowledgeInterruption,
     toggleHistory,
+    dismissInterruption,
   } = useInterruption();
-  const { playAudio, playChime } = useAudioPlayer();
+  const { playAudio, playChime, isPlaying: isAudioPlaying, getAnalyser } = useAudioPlayer();
 
   // Refs for cleanup
   const mediaServiceRef = useRef<MediaService>(new MediaService());
@@ -560,6 +561,8 @@ function AppContent() {
             elapsedTime={elapsedTime}
             feedbackCount={interruptions.length}
             isListening={micActive && !isMuted}
+            isSpeaking={isAudioPlaying}
+            getAnalyser={getAnalyser}
             inputMode={inputMode}
             onSwitchToCamera={switchToCamera}
             onSwitchToScreen={switchToScreen}
@@ -573,6 +576,7 @@ function AppContent() {
               <InterruptionCard
                 interruption={activeInterruption}
                 onAcknowledge={acknowledgeInterruption}
+                onDismiss={dismissInterruption}
               />
             )}
           </SessionView>
